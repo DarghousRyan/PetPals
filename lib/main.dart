@@ -162,7 +162,7 @@ class _HomeState extends State<Home> {
       borderRadius: BorderRadius.circular(22),
       border: Border.all(color: ink.withValues(alpha: .06)),
     ),
-    child: child,
+    child: Material(color: Colors.transparent, child: child),
   );
   Widget heading(String title, String subtitle, {Widget? action}) => Padding(
     padding: const EdgeInsets.only(bottom: 24),
@@ -897,7 +897,9 @@ class _HomeState extends State<Home> {
                 subtitle: Text(
                   '${s.tasks.where((t) => t['assignee'] == m).length} assigned tasks',
                 ),
-                trailing:
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                     m == s.activeMember
                         ? const Chip(label: Text('Active'))
                         : TextButton(
@@ -907,6 +909,26 @@ class _HomeState extends State<Home> {
                           },
                           child: const Text('Switch'),
                         ),
+                    if (m != 'You')
+                      IconButton(
+                        tooltip: 'Remove $m',
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          color: Colors.red,
+                        ),
+                        onPressed: () async {
+                          final confirmed = await confirm(
+                            'Remove $m?',
+                            'Their assigned tasks will be reassigned to the remaining household owner.',
+                          );
+                          if (confirmed) {
+                            await s.removeMember(m);
+                            message('$m was removed from the household.');
+                          }
+                        },
+                      ),
+                  ],
+                ),
               ),
             ),
             const Divider(),
@@ -1164,8 +1186,17 @@ class _HomeState extends State<Home> {
                 await s.removePet(existing['id']);
               },
     );
-    for (final c in [name, breed, birthday, weight, notes]) {
-      c.dispose();
+    await disposeControllersAfterDialog([name, breed, birthday, weight, notes]);
+  }
+
+  /// A dialog can still be finishing its close animation after showDialog
+  /// returns. Dispose controllers after the form widgets are fully unmounted.
+  Future<void> disposeControllersAfterDialog(
+    Iterable<TextEditingController> controllers,
+  ) async {
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    for (final controller in controllers) {
+      controller.dispose();
     }
   }
 
@@ -1281,8 +1312,7 @@ class _HomeState extends State<Home> {
         await s.save();
       },
     );
-    title.dispose();
-    notes.dispose();
+    await disposeControllersAfterDialog([title, notes]);
   }
 
   Future<void> recordForm({
@@ -1365,9 +1395,7 @@ class _HomeState extends State<Home> {
                 await s.save();
               },
     );
-    title.dispose();
-    provider.dispose();
-    notes.dispose();
+    await disposeControllersAfterDialog([title, provider, notes]);
   }
 
   Future<void> memberForm() async {
@@ -1395,6 +1423,6 @@ class _HomeState extends State<Home> {
         await s.save();
       },
     );
-    name.dispose();
+    await disposeControllersAfterDialog([name]);
   }
 }

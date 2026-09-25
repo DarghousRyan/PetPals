@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:petpal/store.dart';
+import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
 class MemoryStore extends PetPalStore {
   @override
@@ -12,6 +14,8 @@ void main() {
   late MemoryStore store;
   final today = DateTime(2026, 9, 9);
   setUp(() {
+    SharedPreferencesAsyncPlatform.instance =
+        InMemorySharedPreferencesAsync.empty();
     store = MemoryStore();
     store.pets.add({'id': 'p', 'name': 'Milo'});
     store.tasks.add({
@@ -56,4 +60,15 @@ void main() {
       expect(store.history.single['pet'], 'Milo');
     },
   );
+  test('removing a household member reassigns their tasks', () async {
+    store.members = ['You', 'Jhenaro'];
+    store.activeMember = 'Jhenaro';
+    store.tasks.first['assignee'] = 'Jhenaro';
+
+    expect(await store.removeMember('Jhenaro'), isTrue);
+    expect(store.members, ['You']);
+    expect(store.activeMember, 'You');
+    expect(store.tasks.first['assignee'], 'You');
+    expect(await store.removeMember('You'), isFalse);
+  });
 }

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:petpal/main.dart';
 import 'package:petpal/store.dart';
+import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
 class MemoryStore extends PetPalStore {
   @override
@@ -14,6 +16,8 @@ void main() {
   testWidgets('first-run flow creates a pet and opens the care dashboard', (
     tester,
   ) async {
+    SharedPreferencesAsyncPlatform.instance =
+        InMemorySharedPreferencesAsync.empty();
     final store = MemoryStore();
     await tester.pumpWidget(PetPalApp(store: store));
     await tester.tap(find.text('Add your first pet'));
@@ -32,6 +36,8 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
+    SharedPreferencesAsyncPlatform.instance =
+        InMemorySharedPreferencesAsync.empty();
     final store = MemoryStore();
     await store.demo();
     await tester.pumpWidget(PetPalApp(store: store));

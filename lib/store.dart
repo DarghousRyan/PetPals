@@ -119,6 +119,20 @@ class PetPalStore extends ChangeNotifier {
     await save();
   }
 
+  Future<bool> removeMember(String member) async {
+    // Keep the local owner profile so the household always has an owner.
+    if (member == 'You' || !members.contains(member)) return false;
+
+    members.remove(member);
+    final fallback = members.isNotEmpty ? members.first : 'You';
+    for (final task in tasks) {
+      if (task['assignee'] == member) task['assignee'] = fallback;
+    }
+    if (activeMember == member) activeMember = fallback;
+    await save();
+    return true;
+  }
+
   Future<void> demo() async {
     if (pets.isNotEmpty) return;
     pets.add({
