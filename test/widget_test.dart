@@ -20,6 +20,10 @@ void main() {
         InMemorySharedPreferencesAsync.empty();
     final store = MemoryStore();
     await tester.pumpWidget(PetPalApp(store: store));
+    await tester.enterText(find.byType(TextField).at(0), 'ryan@example.com');
+    await tester.enterText(find.byType(TextField).at(1), 'password123');
+    await tester.tap(find.text('Sign in'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Add your first pet'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextFormField).first, 'Luna');
@@ -41,6 +45,10 @@ void main() {
     final store = MemoryStore();
     await store.demo();
     await tester.pumpWidget(PetPalApp(store: store));
+    await tester.enterText(find.byType(TextField).at(0), 'ryan@example.com');
+    await tester.enterText(find.byType(TextField).at(1), 'password123');
+    await tester.tap(find.text('Sign in'));
+    await tester.pumpAndSettle();
     expect(find.text('0 of 4 tasks done'), findsOneWidget);
     await tester.tap(find.text('Household'));
     await tester.pumpAndSettle();

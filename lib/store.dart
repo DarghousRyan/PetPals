@@ -16,6 +16,9 @@ class PetPalStore extends ChangeNotifier {
   List<Map<String, dynamic>> history = [];
   List<String> members = ['You'];
   String activeMember = 'You';
+  String currentUserName = 'You';
+  List<Map<String, dynamic>> households = [];
+  String activeHouseholdId = 'default';
   bool reminders = true;
   String? error;
   bool loadFailed = false;
@@ -28,13 +31,27 @@ class PetPalStore extends ChangeNotifier {
       final raw = await prefs.getString('petpal.v1');
       if (raw != null) {
         final data = jsonDecode(raw) as Map<String, dynamic>;
-        pets = _list(data['pets']);
-        tasks = _list(data['tasks']);
-        records = _list(data['records']);
-        history = _list(data['history']);
-        members = List<String>.from(data['members']);
-        activeMember = data['activeMember'] as String;
-        reminders = data['reminders'] as bool;
+        currentUserName = (data['currentUserName'] as String?) ?? 'You';
+        final savedHouseholds = data['households'];
+        if (savedHouseholds is List && savedHouseholds.isNotEmpty) {
+          households = _list(savedHouseholds);
+          activeHouseholdId =
+              (data['activeHouseholdId'] as String?) ??
+              households.first['id'] as String;
+          _loadHousehold(activeHouseholdId);
+        } else {
+          // Migrate the original single-household prototype format.
+          pets = _list(data['pets'] ?? const []);
+          tasks = _list(data['tasks'] ?? const []);
+          records = _list(data['records'] ?? const []);
+          history = _list(data['history'] ?? const []);
+          members = List<String>.from(data['members'] ?? ['You']);
+          activeMember = (data['activeMember'] as String?) ?? 'You';
+          reminders = (data['reminders'] as bool?) ?? true;
+          households = [_snapshot(name: 'My household')];
+          activeHouseholdId = households.first['id'] as String;
+          _loadHousehold(activeHouseholdId);
+        }
       }
     } catch (_) {
       loadFailed = true;
@@ -43,9 +60,104 @@ class PetPalStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setCurrentUser(String name) {
+    if (name.trim().isEmpty) return;
+    final normalized = name.trim();
+    final previousName = currentUserName;
+    currentUserName = normalized;
+    final ownerIndex = members.indexOf(previousName);
+    if (ownerIndex >= 0) {
+      members[ownerIndex] = normalized;
+    } else if (!members.contains(normalized)) {
+      members.insert(0, normalized);
+    }
+    activeMember = normalized;
+    if (households.isEmpty) {
+      households = [_snapshot(name: 'My household')];
+    } else {
+      _syncActiveHousehold();
+    }
+    notifyListeners();
+  }
+
+  String get activeHouseholdName =>
+      households.where((h) => h['id'] == activeHouseholdId).firstOrNull?['name']
+          as String? ??
+      'My household';
+
+  void _loadHousehold(String id) {
+    final household = households.where((h) => h['id'] == id).firstOrNull;
+    if (household == null) return;
+    pets = _list(household['pets'] ?? const []);
+    tasks = _list(household['tasks'] ?? const []);
+    records = _list(household['records'] ?? const []);
+    history = _list(household['history'] ?? const []);
+    members = List<String>.from(household['members'] ?? [currentUserName]);
+    activeMember =
+        (household['activeMember'] as String?) ?? currentUserName;
+    reminders = (household['reminders'] as bool?) ?? true;
+    if (!members.contains(currentUserName)) members.insert(0, currentUserName);
+  }
+
+  Map<String, dynamic> _snapshot({String? name}) => {
+    'id': activeHouseholdId,
+    'name': name ?? activeHouseholdName,
+    'pets': pets,
+    'tasks': tasks,
+    'records': records,
+    'history': history,
+    'members': members,
+    'activeMember': activeMember,
+    'reminders': reminders,
+  };
+
+  void _syncActiveHousehold() {
+    final index = households.indexWhere((h) => h['id'] == activeHouseholdId);
+    final snapshot = _snapshot();
+    if (index >= 0) {
+      households[index] = snapshot;
+    } else {
+      households.add(snapshot);
+    }
+  }
+
+  Future<void> switchHousehold(String id) async {
+    if (id == activeHouseholdId || !households.any((h) => h['id'] == id)) {
+      return;
+    }
+    _syncActiveHousehold();
+    activeHouseholdId = id;
+    _loadHousehold(id);
+    await save();
+  }
+
+  Future<void> createHousehold(String name) async {
+    final normalized = name.trim();
+    if (normalized.isEmpty) return;
+    _syncActiveHousehold();
+    final id = newId();
+    activeHouseholdId = id;
+    households.add({
+      'id': id,
+      'name': normalized,
+      'pets': <Map<String, dynamic>>[],
+      'tasks': <Map<String, dynamic>>[],
+      'records': <Map<String, dynamic>>[],
+      'history': <Map<String, dynamic>>[],
+      'members': [currentUserName],
+      'activeMember': currentUserName,
+      'reminders': true,
+    });
+    _loadHousehold(id);
+    await save();
+  }
+
   List<Map<String, dynamic>> _list(dynamic value) =>
       (value as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
   String export() => const JsonEncoder.withIndent('  ').convert({
+    'currentUserName': currentUserName,
+    'households': households,
+    'activeHouseholdId': activeHouseholdId,
     'pets': pets,
     'tasks': tasks,
     'records': records,
@@ -55,6 +167,7 @@ class PetPalStore extends ChangeNotifier {
     'reminders': reminders,
   });
   Future<void> save() {
+    _syncActiveHousehold();
     final snapshot = export();
     _queue = _queue.then((_) async {
       try {
@@ -121,10 +234,10 @@ class PetPalStore extends ChangeNotifier {
 
   Future<bool> removeMember(String member) async {
     // Keep the local owner profile so the household always has an owner.
-    if (member == 'You' || !members.contains(member)) return false;
+    if (member == currentUserName || !members.contains(member)) return false;
 
     members.remove(member);
-    final fallback = members.isNotEmpty ? members.first : 'You';
+    final fallback = members.isNotEmpty ? members.first : currentUserName;
     for (final task in tasks) {
       if (task['assignee'] == member) task['assignee'] = fallback;
     }
@@ -144,7 +257,7 @@ class PetPalStore extends ChangeNotifier {
       'weight': '28 kg',
       'notes': 'Sample pet — replace with your own details.',
     });
-    members = ['You', 'Housemate'];
+    members = [currentUserName, 'Housemate'];
     for (final entry in [
       ['Breakfast', 'Feeding', '08:00'],
       ['Morning walk', 'Walking', '09:00'],
@@ -159,7 +272,7 @@ class PetPalStore extends ChangeNotifier {
         'time': entry[2],
         'date': dayKey(DateTime.now()),
         'daily': true,
-        'assignee': 'You',
+        'assignee': currentUserName,
         'notes': '',
       });
     }

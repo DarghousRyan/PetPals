@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'store.dart';
 
 const ink = Color(0xFF153D3A);
@@ -14,16 +15,30 @@ const categoryIcons = [
   Icons.medication_rounded,
   Icons.pets_rounded,
 ];
+const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+const supabasePublishableKey = String.fromEnvironment(
+  'SUPABASE_PUBLISHABLE_KEY',
+);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final authEnabled =
+      supabaseUrl.isNotEmpty && supabasePublishableKey.isNotEmpty;
+  if (authEnabled) {
+    await Supabase.initialize(
+      url: supabaseUrl,
+      anonKey: supabasePublishableKey,
+    );
+  }
   final store = PetPalStore();
   await store.load();
-  runApp(PetPalApp(store: store));
+  runApp(PetPalApp(store: store, authEnabled: authEnabled));
 }
 
 class PetPalApp extends StatelessWidget {
   final PetPalStore store;
-  const PetPalApp({super.key, required this.store});
+  final bool authEnabled;
+  const PetPalApp({super.key, required this.store, this.authEnabled = false});
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'PetPal',
@@ -63,13 +78,436 @@ class PetPalApp extends StatelessWidget {
         elevation: 0,
       ),
     ),
-    home: Home(store: store),
+    home: AuthGate(store: store, authEnabled: authEnabled),
+  );
+}
+
+class AuthGate extends StatefulWidget {
+  final PetPalStore store;
+  final bool authEnabled;
+  const AuthGate({super.key, required this.store, required this.authEnabled});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  String? localUser;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.authEnabled) {
+      if (localUser != null) {
+        return Home(
+          store: widget.store,
+          currentUserLabel: localUser,
+          onSignOut: () => setState(() => localUser = null),
+        );
+      }
+      return AuthScreen(
+        store: widget.store,
+        localMode: true,
+        onLocalSignedIn: (name) => setState(() => localUser = name),
+      );
+    }
+
+    return StreamBuilder<AuthState>(
+      stream: Supabase.instance.client.auth.onAuthStateChange,
+      builder: (context, snapshot) {
+        final session = snapshot.data?.session;
+        if (session == null) return AuthScreen(store: widget.store);
+        final user = session.user;
+        final label =
+            (user.userMetadata?['full_name'] as String?)?.trim().isNotEmpty ==
+                    true
+                ? user.userMetadata!['full_name'] as String
+                : user.email ?? 'Signed-in user';
+        return Home(
+          store: widget.store,
+          currentUserLabel: label,
+          onSignOut: () => Supabase.instance.client.auth.signOut(),
+        );
+      },
+    );
+  }
+}
+
+class AuthScreen extends StatefulWidget {
+  final PetPalStore store;
+  final bool localMode;
+  final ValueChanged<String>? onLocalSignedIn;
+  const AuthScreen({
+    super.key,
+    required this.store,
+    this.localMode = false,
+    this.onLocalSignedIn,
+  });
+
+  @override
+  State<AuthScreen> createState() => _AuthScreenState();
+}
+
+class _AuthScreenState extends State<AuthScreen> {
+  final email = TextEditingController();
+  final username = TextEditingController();
+  final password = TextEditingController();
+  final confirmPassword = TextEditingController();
+  bool creatingAccount = false;
+  bool busy = false;
+  String? error;
+  String? notice;
+  bool needsConfirmation = false;
+
+  @override
+  void dispose() {
+    email.dispose();
+    username.dispose();
+    password.dispose();
+    confirmPassword.dispose();
+    super.dispose();
+  }
+
+  Future<void> submit() async {
+    final normalizedEmail = email.text.trim();
+    final emailLooksValid = RegExp(
+      r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+    ).hasMatch(normalizedEmail);
+    if (!emailLooksValid) {
+      setState(() {
+        error = 'Enter a valid email address, such as name@example.com.';
+        notice = null;
+        needsConfirmation = false;
+      });
+      return;
+    }
+    if (creatingAccount && username.text.trim().isEmpty) {
+      setState(() {
+        error = 'Enter a username so your household can recognize you.';
+        notice = null;
+        needsConfirmation = false;
+      });
+      return;
+    }
+    if (password.text.length < 6) {
+      setState(() {
+        error = 'Your password must be at least 6 characters long.';
+        notice = null;
+        needsConfirmation = false;
+      });
+      return;
+    }
+    if (creatingAccount && password.text != confirmPassword.text) {
+      setState(() {
+        error = 'The passwords do not match.';
+        notice = null;
+        needsConfirmation = false;
+      });
+      return;
+    }
+    setState(() {
+      busy = true;
+      error = null;
+      notice = null;
+      needsConfirmation = false;
+    });
+    try {
+      if (widget.localMode) {
+        widget.onLocalSignedIn?.call(
+          creatingAccount && username.text.trim().isNotEmpty
+              ? username.text.trim()
+              : _usernameFromEmail(normalizedEmail),
+        );
+        return;
+      }
+      final auth = Supabase.instance.client.auth;
+      if (creatingAccount) {
+        final response = await auth.signUp(
+          email: normalizedEmail,
+          password: password.text,
+          data: {'full_name': username.text.trim()},
+        );
+        if (response.session == null && mounted) {
+          setState(() {
+            notice =
+                'Account created. Check your inbox and spam folder, then click the confirmation link before signing in.';
+            needsConfirmation = true;
+          });
+        }
+      } else {
+        await auth.signInWithPassword(
+          email: normalizedEmail,
+          password: password.text,
+        );
+      }
+    } on AuthException catch (exception) {
+      if (mounted) {
+        final friendly = friendlyAuthError(exception, creatingAccount);
+        setState(() {
+          error = friendly.message;
+          needsConfirmation = friendly.needsConfirmation;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () =>
+              error =
+                  'We could not reach PetPal. Check your internet connection and try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  String _usernameFromEmail(String value) =>
+      value.split('@').first.trim().isEmpty ? 'PetPal user' : value.split('@').first;
+
+  Future<void> continueWithSso() async {
+    setState(() {
+      busy = true;
+      error = null;
+      notice = null;
+    });
+    try {
+      await Supabase.instance.client.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: Uri.base.origin,
+      );
+    } on AuthException catch (exception) {
+      if (mounted) setState(() => error = friendlyAuthError(exception).message);
+    } catch (_) {
+      if (mounted) {
+        setState(() => error = 'SSO could not be started. Try email sign in instead.');
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> resendConfirmation() async {
+    final normalizedEmail = email.text.trim();
+    setState(() {
+      busy = true;
+      error = null;
+      notice = null;
+    });
+    try {
+      await Supabase.instance.client.auth.resend(
+        type: OtpType.signup,
+        email: normalizedEmail,
+      );
+      if (mounted) {
+        setState(
+          () =>
+              notice =
+                  'A new confirmation email was sent. Check your inbox and spam folder.',
+        );
+      }
+    } on AuthException catch (exception) {
+      if (mounted) setState(() => error = friendlyAuthError(exception).message);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () =>
+              error =
+                  'The confirmation email could not be resent. Check your connection and try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(28),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 440),
+          child: Card(
+            elevation: 0,
+            color: Colors.white,
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Icon(Icons.pets_rounded, color: teal, size: 52),
+                  const SizedBox(height: 12),
+                  Text(
+                    creatingAccount
+                        ? 'Create your PetPal account'
+                        : 'Welcome to PetPal',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Sign in to automatically see your households and activity.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  TextField(
+                    controller: email,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(labelText: 'Email'),
+                  ),
+                  const SizedBox(height: 12),
+                  if (creatingAccount) ...[
+                    TextField(
+                      controller: username,
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(labelText: 'Username'),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  TextField(
+                    controller: password,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'Password'),
+                  ),
+                  if (creatingAccount) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: confirmPassword,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Re-type password',
+                      ),
+                    ),
+                  ],
+                  if (error != null) ...[
+                    const SizedBox(height: 12),
+                    Text(error!, style: const TextStyle(color: Colors.red)),
+                  ],
+                  if (notice != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      notice!,
+                      style: const TextStyle(color: Color(0xFF147D70)),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  FilledButton(
+                    onPressed: busy ? null : submit,
+                    child: Text(
+                      busy
+                          ? 'Please wait…'
+                          : creatingAccount
+                          ? 'Create account'
+                          : 'Sign in',
+                    ),
+                  ),
+                  if (!creatingAccount && !widget.localMode) ...[
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: busy ? null : continueWithSso,
+                      icon: const Icon(Icons.login),
+                      label: const Text('Continue with Google SSO'),
+                    ),
+                  ],
+                  if (needsConfirmation)
+                    TextButton(
+                      onPressed: busy ? null : resendConfirmation,
+                      child: const Text('Resend confirmation email'),
+                    ),
+                  TextButton(
+                    onPressed:
+                        busy
+                            ? null
+                            : () => setState(() {
+                              creatingAccount = !creatingAccount;
+                              error = null;
+                              notice = null;
+                              needsConfirmation = false;
+                            }),
+                    child: Text(
+                      creatingAccount
+                          ? 'Already have an account? Sign in'
+                          : 'New to PetPal? Create an account',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class FriendlyAuthError {
+  final String message;
+  final bool needsConfirmation;
+  const FriendlyAuthError(this.message, {this.needsConfirmation = false});
+}
+
+FriendlyAuthError friendlyAuthError(
+  AuthException exception, [
+  bool creatingAccount = false,
+]) {
+  final message = exception.message.toLowerCase();
+  final status = exception.statusCode;
+
+  if (message.contains('email not confirmed') ||
+      message.contains('email_not_confirmed')) {
+    return const FriendlyAuthError(
+      'Your email has not been confirmed yet. Check your inbox and spam folder, click the confirmation link, then sign in again.',
+      needsConfirmation: true,
+    );
+  }
+  if (message.contains('invalid login credentials') ||
+      message.contains('user not found') ||
+      message.contains('invalid email or password')) {
+    return const FriendlyAuthError(
+      'We could not sign you in. Check your email and password, or choose “Create an account” if you do not have an account yet.',
+    );
+  }
+  if (message.contains('already registered') ||
+      message.contains('already exists') ||
+      message.contains('user already')) {
+    return const FriendlyAuthError(
+      'An account may already exist for this email. Try signing in instead, or use password recovery.',
+    );
+  }
+  if (message.contains('password') &&
+      (message.contains('weak') || message.contains('short'))) {
+    return const FriendlyAuthError(
+      'Choose a stronger password with at least 6 characters.',
+    );
+  }
+  if (status == '429' ||
+      message.contains('rate limit') ||
+      message.contains('too many')) {
+    return const FriendlyAuthError(
+      'Too many attempts. Wait a few minutes before trying again.',
+    );
+  }
+  if (message.contains('network') || message.contains('connection')) {
+    return const FriendlyAuthError(
+      'We could not connect to PetPal. Check your internet connection and try again.',
+    );
+  }
+  return FriendlyAuthError(
+    creatingAccount
+        ? 'We could not create the account. Check your details and try again.'
+        : 'We could not sign you in. Check your details and try again.',
   );
 }
 
 class Home extends StatefulWidget {
   final PetPalStore store;
-  const Home({super.key, required this.store});
+  final String? currentUserLabel;
+  final VoidCallback? onSignOut;
+  const Home({
+    super.key,
+    required this.store,
+    this.currentUserLabel,
+    this.onSignOut,
+  });
   @override
   State<Home> createState() => _HomeState();
 }
@@ -84,6 +522,9 @@ class _HomeState extends State<Home> {
   @override
   void initState() {
     super.initState();
+    if (widget.currentUserLabel != null) {
+      s.setCurrentUser(widget.currentUserLabel!);
+    }
     s.addListener(refresh);
     timer = Timer.periodic(
       const Duration(seconds: 30),
@@ -107,6 +548,99 @@ class _HomeState extends State<Home> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(text), behavior: SnackBarBehavior.floating),
       );
+    }
+  }
+
+  Future<void> householdPicker() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder:
+          (ctx) => SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Switch household',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 12),
+                  ...s.households.map(
+                    (h) => ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.home_work_outlined),
+                      title: Text(h['name'] as String),
+                      subtitle: Text(
+                        '${(h['members'] as List?)?.length ?? 0} members · ${(h['pets'] as List?)?.length ?? 0} pets',
+                      ),
+                      trailing:
+                          h['id'] == s.activeHouseholdId
+                              ? const Icon(Icons.check, color: teal)
+                              : null,
+                      onTap: () async {
+                        await s.switchHousehold(h['id'] as String);
+                        if (ctx.mounted) Navigator.pop(ctx);
+                      },
+                    ),
+                  ),
+                  const Divider(),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.add_home_work_outlined),
+                    title: const Text('Create another household'),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      householdForm();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+    );
+  }
+
+  Future<void> householdForm() async {
+    final name = TextEditingController();
+    final created = await showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Create household'),
+            content: TextField(
+              controller: name,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Household name'),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, name.text.trim().isNotEmpty),
+                child: const Text('Create'),
+              ),
+            ],
+          ),
+    );
+    if (created == true) {
+      await s.createHousehold(name.text);
+      message('Household created.');
+    }
+    name.dispose();
+  }
+
+  void accountMenu(String choice) {
+    if (choice == 'households') {
+      householdPicker();
+    } else if (choice == 'create') {
+      householdForm();
+    } else if (choice == 'signout') {
+      widget.onSignOut?.call();
     }
   }
 
@@ -244,9 +778,49 @@ class _HomeState extends State<Home> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16),
-            child: Chip(
-              avatar: const Icon(Icons.person_outline, size: 18),
-              label: Text(s.activeMember),
+            child: PopupMenuButton<String>(
+              tooltip: 'Account and households',
+              onSelected: accountMenu,
+              itemBuilder:
+                  (_) => [
+                    PopupMenuItem<String>(
+                      enabled: false,
+                      value: 'account',
+                      child: Text(
+                        s.currentUserName,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'households',
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.home_work_outlined),
+                        title: Text('Switch household'),
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'create',
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.add_home_work_outlined),
+                        title: Text('Create household'),
+                      ),
+                    ),
+                    if (widget.onSignOut != null)
+                      const PopupMenuItem(
+                        value: 'signout',
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.logout),
+                          title: Text('Sign out'),
+                        ),
+                      ),
+                  ],
+              child: Chip(
+                avatar: const Icon(Icons.person_outline, size: 18),
+                label: Text(s.currentUserName),
+              ),
             ),
           ),
         ],
@@ -883,7 +1457,7 @@ class _HomeState extends State<Home> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Choose who is using this device. This is a local profile switch, not a sign-in.',
+              'Manage the people who share this household. Use the profile menu above to switch households.',
             ),
             const SizedBox(height: 12),
             ...s.members.map(
@@ -909,7 +1483,7 @@ class _HomeState extends State<Home> {
                           },
                           child: const Text('Switch'),
                         ),
-                    if (m != 'You')
+                    if (m != s.currentUserName)
                       IconButton(
                         tooltip: 'Remove $m',
                         icon: const Icon(
