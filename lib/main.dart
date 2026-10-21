@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'store.dart';
 
@@ -33,6 +35,29 @@ Future<void> main() async {
   final store = PetPalStore();
   await store.load();
   runApp(PetPalApp(store: store, authEnabled: authEnabled));
+}
+Widget petPhoto(String? photo, {double radius = 30}) {
+  Widget fallback() => CircleAvatar(
+    radius: radius,
+    backgroundColor: const Color(0xFFE6EFDC),
+    child: Icon(Icons.pets, size: radius),
+  );
+
+  if (photo == null || photo.isEmpty) return fallback();
+
+  try {
+    return ClipOval(
+      child: Image.memory(
+        base64Decode(photo),
+        width: radius * 2,
+        height: radius * 2,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => fallback(),
+      ),
+    );
+  } catch (_) {
+    return fallback();
+  }
 }
 
 class PetPalApp extends StatelessWidget {
@@ -1275,7 +1300,9 @@ class _HomeState extends State<Home> {
             children: [
               Row(
                 children: [
-                  CircleAvatar(
+             (p['photo'] as String? ?? '').isNotEmpty
+    		? petPhoto(p['photo'] as String?)
+    		: CircleAvatar(  
                     radius: 30,
                     backgroundColor: const Color(0xFFE6EFDC),
                     child: Text(
@@ -1697,10 +1724,77 @@ class _HomeState extends State<Home> {
     final weight = TextEditingController(text: existing?['weight']);
     final notes = TextEditingController(text: existing?['notes']);
     String species = existing?['species'] ?? 'Dog';
+    String photo = existing?['photo'] as String? ?? '';
+    String? photoError;
+    bool choosingPhoto = false;
+    bool formOpen = true;
     await form(
       title: existing == null ? 'Meet your pet' : 'Edit pet',
       fields:
           (update) => [
+	    Center(child: petPhoto(photo, radius: 48)),
+            const SizedBox(height: 12),
+OutlinedButton.icon(
+  icon: const Icon(Icons.add_photo_alternate_outlined),
+  label: Text(choosingPhoto ? 'Opening photos…' : 'Choose photo'),
+  onPressed: choosingPhoto
+      ? null
+      : () async {
+          update(() {
+            choosingPhoto = true;
+            photoError = null;
+          });
+
+          try {
+            final picked = await ImagePicker().pickImage(
+              source: ImageSource.gallery,
+              maxWidth: 600,
+              maxHeight: 600,
+              imageQuality: 75,
+            );
+
+            if (picked == null || !formOpen || !mounted) return;
+
+            final bytes = await picked.readAsBytes();
+            if (!formOpen || !mounted) return;
+
+            if (bytes.length > 500 * 1024) {
+              update(() {
+                photoError = 'Choose a photo under 500 KB.';
+              });
+              return;
+            }
+
+            update(() {
+              photo = base64Encode(bytes);
+            });
+          } catch (_) {
+            if (formOpen && mounted) {
+              update(() {
+                photoError = 'Could not open that photo. Try a JPG or PNG.';
+              });
+            }
+          } finally {
+            if (formOpen && mounted) {
+              update(() => choosingPhoto = false);
+            }
+          }
+        },
+),
+if (photo.isNotEmpty)
+  TextButton.icon(
+    onPressed: () => update(() {
+      photo = '';
+      photoError = null;
+    }),
+    icon: const Icon(Icons.delete_outline),
+    label: const Text('Remove photo'),
+  ),
+if (photoError != null)
+  Text(
+    photoError!,
+    style: TextStyle(color: Theme.of(context).colorScheme.error),
+  ),
             field(name, 'Name', required: true),
             choice('Species', species, [
               'Dog',
@@ -1740,6 +1834,7 @@ class _HomeState extends State<Home> {
           'id': existing?['id'] ?? newId(),
           'name': name.text.trim(),
           'species': species,
+	  'photo': photo,
           'breed': breed.text.trim(),
           'birthday': birthday.text,
           'weight': weight.text.trim(),
@@ -1760,6 +1855,7 @@ class _HomeState extends State<Home> {
                 await s.removePet(existing['id']);
               },
     );
+    formOpen = false;
     await disposeControllersAfterDialog([name, breed, birthday, weight, notes]);
   }
 
