@@ -24,17 +24,34 @@ const supabasePublishableKey = String.fromEnvironment(
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final authEnabled =
+  var authEnabled =
       supabaseUrl.isNotEmpty && supabasePublishableKey.isNotEmpty;
+  String? startupError;
   if (authEnabled) {
-    await Supabase.initialize(
-      url: supabaseUrl,
-      anonKey: supabasePublishableKey,
-    );
+    try {
+      await Supabase.initialize(
+        url: supabaseUrl,
+        publishableKey: supabasePublishableKey,
+      );
+    } catch (_) {
+      authEnabled = false;
+      startupError =
+          'Supabase could not be initialized. Check the URL and publishable key.';
+    }
   }
-  final store = PetPalStore();
-  await store.load();
-  runApp(PetPalApp(store: store, authEnabled: authEnabled));
+  final store = PetPalStore(
+    supabaseClient: authEnabled ? Supabase.instance.client : null,
+  );
+  runApp(
+    PetPalApp(
+      store: store,
+      authEnabled: authEnabled,
+      startupError: startupError,
+    ),
+  );
+  // Render the login screen immediately. A slow or unavailable Supabase
+  // request must not leave the native simulator on a blank white screen.
+  unawaited(store.load());
 }
 Widget petPhoto(String? photo, {double radius = 30}) {
   Widget fallback() => CircleAvatar(
@@ -63,7 +80,13 @@ Widget petPhoto(String? photo, {double radius = 30}) {
 class PetPalApp extends StatelessWidget {
   final PetPalStore store;
   final bool authEnabled;
-  const PetPalApp({super.key, required this.store, this.authEnabled = false});
+  final String? startupError;
+  const PetPalApp({
+    super.key,
+    required this.store,
+    this.authEnabled = false,
+    this.startupError,
+  });
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'PetPal',
@@ -103,14 +126,24 @@ class PetPalApp extends StatelessWidget {
         elevation: 0,
       ),
     ),
-    home: AuthGate(store: store, authEnabled: authEnabled),
+    home: AuthGate(
+      store: store,
+      authEnabled: authEnabled,
+      startupError: startupError,
+    ),
   );
 }
 
 class AuthGate extends StatefulWidget {
   final PetPalStore store;
   final bool authEnabled;
-  const AuthGate({super.key, required this.store, required this.authEnabled});
+  final String? startupError;
+  const AuthGate({
+    super.key,
+    required this.store,
+    required this.authEnabled,
+    this.startupError,
+  });
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -132,6 +165,7 @@ class _AuthGateState extends State<AuthGate> {
       return AuthScreen(
         store: widget.store,
         localMode: true,
+        startupError: widget.startupError,
         onLocalSignedIn: (name) => setState(() => localUser = name),
       );
     }
@@ -160,11 +194,13 @@ class _AuthGateState extends State<AuthGate> {
 class AuthScreen extends StatefulWidget {
   final PetPalStore store;
   final bool localMode;
+  final String? startupError;
   final ValueChanged<String>? onLocalSignedIn;
   const AuthScreen({
     super.key,
     required this.store,
     this.localMode = false,
+    this.startupError,
     this.onLocalSignedIn,
   });
 
@@ -373,6 +409,14 @@ class _AuthScreenState extends State<AuthScreen> {
                     'Sign in to automatically see your households and activity.',
                     textAlign: TextAlign.center,
                   ),
+                  if (widget.startupError != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      widget.startupError!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  ],
                   const SizedBox(height: 24),
                   TextField(
                     controller: email,
@@ -659,11 +703,43 @@ class _HomeState extends State<Home> {
     name.dispose();
   }
 
+  Future<void> acceptInvitationForm() async {
+    if (s.remote == null) {
+      message('Sign in with Supabase before accepting an invitation.');
+      return;
+    }
+    final token = TextEditingController();
+    final displayName = TextEditingController(text: s.currentUserName);
+    await form(
+      title: 'Accept household invitation',
+      fields:
+          (_) => [
+            field(
+              token,
+              'Invitation code',
+              hint: 'Paste the code from the household admin',
+              required: true,
+            ),
+            field(displayName, 'Name shown to the household', required: true),
+          ],
+      onSave: () async {
+        await s.acceptInvitation(
+          token: token.text,
+          displayName: displayName.text,
+        );
+        message('You joined the household.');
+      },
+    );
+    await disposeControllersAfterDialog([token, displayName]);
+  }
+
   void accountMenu(String choice) {
     if (choice == 'households') {
       householdPicker();
     } else if (choice == 'create') {
       householdForm();
+    } else if (choice == 'accept') {
+      acceptInvitationForm();
     } else if (choice == 'signout') {
       widget.onSignOut?.call();
     }
@@ -832,6 +908,15 @@ class _HomeState extends State<Home> {
                         title: Text('Create household'),
                       ),
                     ),
+                    if (s.remote != null)
+                      const PopupMenuItem(
+                        value: 'accept',
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.mark_email_read_outlined),
+                          title: Text('Accept invitation'),
+                        ),
+                      ),
                     if (widget.onSignOut != null)
                       const PopupMenuItem(
                         value: 'signout',
@@ -2069,30 +2154,88 @@ if (photoError != null)
   }
 
   Future<void> memberForm() async {
-    final name = TextEditingController();
+    final email = TextEditingController();
+    String role = 'member';
+    String? inviteToken;
+    final online = s.remote != null;
     await form(
-      title: 'Add household member',
+      title: online ? 'Invite household member' : 'Add household member',
       fields:
-          (_) => [
+          (update) => [
             field(
-              name,
-              'Name',
+              email,
+              online ? 'Email address' : 'Name',
               validator: (v) {
-                if (v == null || v.trim().isEmpty) return 'Enter a name';
-                if (s.members.any(
-                  (m) => m.toLowerCase() == v.trim().toLowerCase(),
-                )) {
+                if (v == null || v.trim().isEmpty) {
+                  return online ? 'Enter an email address' : 'Enter a name';
+                }
+                if (online &&
+                    !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim())) {
+                  return 'Enter a valid email address';
+                }
+                if (!online &&
+                    s.members.any(
+                      (m) => m.toLowerCase() == v.trim().toLowerCase(),
+                    )) {
                   return 'That name is already in your household';
                 }
                 return null;
               },
             ),
+            if (online)
+              DropdownButtonFormField<String>(
+                value: role,
+                decoration: const InputDecoration(labelText: 'Role'),
+                items: const [
+                  DropdownMenuItem(value: 'member', child: Text('Member')),
+                  DropdownMenuItem(
+                    value: 'caregiver',
+                    child: Text('Caregiver'),
+                  ),
+                ],
+                onChanged: (value) => update(() => role = value ?? 'member'),
+              ),
           ],
       onSave: () async {
-        s.members.add(name.text.trim());
-        await s.save();
+        if (online) {
+          inviteToken = await s.createInvitation(
+            email: email.text,
+            role: role,
+          );
+        } else {
+          s.members.add(email.text.trim());
+          await s.save();
+        }
       },
     );
-    await disposeControllersAfterDialog([name]);
+    if (inviteToken != null && mounted) {
+      await showDialog<void>(
+        context: context,
+        builder:
+            (ctx) => AlertDialog(
+              title: const Text('Invitation created'),
+              content: SelectableText(
+                'Send this invitation code to ${email.text.trim()}:\n\n$inviteToken\n\nThey must sign in with the invited email address before accepting it.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () async {
+                    await Clipboard.setData(
+                      ClipboardData(text: inviteToken!),
+                    );
+                    if (ctx.mounted) Navigator.pop(ctx);
+                    message('Invitation code copied.');
+                  },
+                  child: const Text('Copy code'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Done'),
+                ),
+              ],
+            ),
+      );
+    }
+    await disposeControllersAfterDialog([email]);
   }
 }
