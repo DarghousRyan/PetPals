@@ -32,7 +32,7 @@ For Android or iOS, start an emulator or connect a phone and run `flutter run`. 
 
 ## Prototype boundaries
 
-This is a **single-device prototype**. Household profiles are local names, not authenticated accounts; there is no invitation delivery or synchronization across devices. A production shared household needs a backend such as Firebase or Supabase, authentication, access rules, and atomic task-completion writes.
+This is a **private-account prototype**. Without Supabase configuration, household profiles and app data are stored locally on one device. With Supabase configured, users can create accounts and sync their own pets, care tasks, task history, and health records. Cross-account household invitations are not supported.
 
 Reminders are foreground alerts, **not background push or scheduled operating-system notifications**. Background notification delivery needs a platform notification service and permission handling. JSON copy is an export; import is not implemented. Health records are text entries, not file attachments. Browser storage can be cleared, and local preferences are not intended as the sole copy of important health records.
 

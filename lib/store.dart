@@ -146,8 +146,24 @@ class PetPalStore extends ChangeNotifier {
   Future<void> createHousehold(String name) async {
     final normalized = name.trim();
     if (normalized.isEmpty) return;
-    _syncActiveHousehold();
+    final client = remote;
+    final user = client?.auth.currentUser;
     final id = newId();
+
+    // Create the remote household and its owner membership atomically. The
+    // RLS policies intentionally reject creating those two rows separately.
+    if (client != null && user != null) {
+      await client.rpc(
+        'create_household_with_owner',
+        params: {
+          'household_id': id,
+          'household_name': normalized,
+          'owner_display_name': currentUserName,
+        },
+      );
+    }
+
+    _syncActiveHousehold();
     activeHouseholdId = id;
     households.add({
       'id': id,
@@ -162,45 +178,6 @@ class PetPalStore extends ChangeNotifier {
     });
     _loadHousehold(id);
     await save();
-  }
-
-  Future<String> createInvitation({
-    required String email,
-    required String role,
-  }) async {
-    final client = remote;
-    if (client == null || client.auth.currentUser == null) {
-      throw StateError('Online sign-in is required to invite a member.');
-    }
-    final result = await client.rpc(
-      'create_household_invitation',
-      params: {
-        'target_household_id': activeHouseholdId,
-        'invited_email': email.trim(),
-        'invited_role': role,
-      },
-    );
-    final row = result is List ? result.first : result;
-    return (row as Map)['invite_token'] as String;
-  }
-
-  Future<void> acceptInvitation({
-    required String token,
-    String displayName = '',
-  }) async {
-    final client = remote;
-    if (client == null || client.auth.currentUser == null) {
-      throw StateError('Online sign-in is required to accept an invitation.');
-    }
-    await client.rpc(
-      'accept_household_invitation',
-      params: {
-        'invitation_token': token.trim(),
-        'member_display_name': displayName.trim(),
-      },
-    );
-    await _loadRemote();
-    notifyListeners();
   }
 
   List<Map<String, dynamic>> _list(dynamic value) =>

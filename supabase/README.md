@@ -1,6 +1,6 @@
 # Supabase setup
 
-`schema.sql` creates the shared online data model for PetPal. It includes households, members, invitations, pets, care tasks, task completions, health records, and household updates.
+`schema.sql` creates the private online data model for PetPal. Each signed-in account owns its household data, including pets, care tasks, task completions, and health records. Household invitations and cross-account sharing are not part of the app flow.
 
 ## Apply the schema
 
@@ -18,10 +18,6 @@ flutter run \
 
 ## What is connected today
 
-Flutter already uses Supabase for email authentication, Google SSO, and sign-out. The app still keeps its current pet/task state in local preferences while the remote repository is being added. Do not treat local mode as multi-device synchronization yet.
+Flutter uses Supabase for email authentication, Google SSO, sign-out, and saving the signed-in account's household data. Without the `--dart-define` values, the app remains fully local and uses browser/device storage.
 
-## Next implementation step
-
-The Flutter store now loads and saves the signed-in user's household data through Supabase. The database policies in `schema.sql` remain the security boundary; Flutter should not be the only place that checks roles.
-
-The household invitation flow creates a secure seven-day invitation code for the invited email. The admin can copy the code from the app and send it to the invitee. The invitee signs in with that email, opens the profile menu, chooses **Accept invitation**, and pastes the code. Automatic email delivery still requires a Supabase Edge Function and an email provider such as Resend or SendGrid.
+The database policies in `schema.sql` remain the security boundary. Existing invitation SQL objects may remain in an already-created Supabase project, but the current Flutter app no longer calls them.
