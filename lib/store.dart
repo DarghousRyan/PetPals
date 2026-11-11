@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 String dayKey(DateTime d) =>
     '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
@@ -8,8 +9,10 @@ String newId() => DateTime.now().microsecondsSinceEpoch.toString();
 
 class PetPalStore extends ChangeNotifier {
   final SharedPreferencesAsync prefs;
-  PetPalStore({SharedPreferencesAsync? preferences})
-    : prefs = preferences ?? SharedPreferencesAsync();
+  final SupabaseClient? remote;
+  PetPalStore({SharedPreferencesAsync? preferences, SupabaseClient? client})
+    : prefs = preferences ?? SharedPreferencesAsync(),
+      remote = client;
   List<Map<String, dynamic>> pets = [];
   List<Map<String, dynamic>> tasks = [];
   List<Map<String, dynamic>> records = [];
@@ -31,33 +34,78 @@ class PetPalStore extends ChangeNotifier {
       final raw = await prefs.getString('petpal.v1');
       if (raw != null) {
         final data = jsonDecode(raw) as Map<String, dynamic>;
-        currentUserName = (data['currentUserName'] as String?) ?? 'You';
-        final savedHouseholds = data['households'];
-        if (savedHouseholds is List && savedHouseholds.isNotEmpty) {
-          households = _list(savedHouseholds);
-          activeHouseholdId =
-              (data['activeHouseholdId'] as String?) ??
-              households.first['id'] as String;
-          _loadHousehold(activeHouseholdId);
-        } else {
-          // Migrate the original single-household prototype format.
-          pets = _list(data['pets'] ?? const []);
-          tasks = _list(data['tasks'] ?? const []);
-          records = _list(data['records'] ?? const []);
-          history = _list(data['history'] ?? const []);
-          members = List<String>.from(data['members'] ?? ['You']);
-          activeMember = (data['activeMember'] as String?) ?? 'You';
-          reminders = (data['reminders'] as bool?) ?? true;
-          households = [_snapshot(name: 'My household')];
-          activeHouseholdId = households.first['id'] as String;
-          _loadHousehold(activeHouseholdId);
-        }
+        _applyData(data);
       }
+      if (remote?.auth.currentUser != null) await _loadRemoteAccount();
     } catch (_) {
       loadFailed = true;
       error = 'Saved data could not be loaded. Retry before making changes.';
     }
     notifyListeners();
+  }
+
+  void _applyData(Map<String, dynamic> data) {
+    currentUserName = (data['currentUserName'] as String?) ?? 'You';
+    final savedHouseholds = data['households'];
+    if (savedHouseholds is List && savedHouseholds.isNotEmpty) {
+      households = _list(savedHouseholds);
+      activeHouseholdId =
+          (data['activeHouseholdId'] as String?) ??
+          households.first['id'] as String;
+      _loadHousehold(activeHouseholdId);
+    } else {
+      pets = _list(data['pets'] ?? const []);
+      tasks = _list(data['tasks'] ?? const []);
+      records = _list(data['records'] ?? const []);
+      history = _list(data['history'] ?? const []);
+      members = List<String>.from(data['members'] ?? ['You']);
+      activeMember = (data['activeMember'] as String?) ?? 'You';
+      reminders = (data['reminders'] as bool?) ?? true;
+      households = [_snapshot(name: 'My household')];
+      activeHouseholdId = households.first['id'] as String;
+      _loadHousehold(activeHouseholdId);
+    }
+  }
+
+  Future<void> connectAccount(String displayName) async {
+    setCurrentUser(displayName);
+    await _loadRemoteAccount();
+    notifyListeners();
+  }
+
+  Future<void> _loadRemoteAccount() async {
+    final client = remote;
+    final user = client?.auth.currentUser;
+    if (client == null || user == null) return;
+    try {
+      final row =
+          await client
+              .from('petpal_accounts')
+              .select('data')
+              .eq('user_id', user.id)
+              .maybeSingle();
+      if (row != null && row['data'] is Map) {
+        _applyData(Map<String, dynamic>.from(row['data'] as Map));
+      } else {
+        await _saveRemoteAccount();
+      }
+      await prefs.setString('petpal.lastRemoteUser', user.id);
+      await prefs.setString('petpal.v1', export());
+      error = null;
+    } catch (_) {
+      error = 'Cloud data could not be loaded. Your local data is still safe.';
+    }
+  }
+
+  Future<void> _saveRemoteAccount() async {
+    final client = remote;
+    final user = client?.auth.currentUser;
+    if (client == null || user == null) return;
+    await client.from('petpal_accounts').upsert({
+      'user_id': user.id,
+      'data': jsonDecode(export()),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    });
   }
 
   void setCurrentUser(String name) {
@@ -93,8 +141,7 @@ class PetPalStore extends ChangeNotifier {
     records = _list(household['records'] ?? const []);
     history = _list(household['history'] ?? const []);
     members = List<String>.from(household['members'] ?? [currentUserName]);
-    activeMember =
-        (household['activeMember'] as String?) ?? currentUserName;
+    activeMember = (household['activeMember'] as String?) ?? currentUserName;
     reminders = (household['reminders'] as bool?) ?? true;
     if (!members.contains(currentUserName)) members.insert(0, currentUserName);
   }
@@ -172,6 +219,7 @@ class PetPalStore extends ChangeNotifier {
     _queue = _queue.then((_) async {
       try {
         await prefs.setString('petpal.v1', snapshot);
+        await _saveRemoteAccount();
         error = null;
       } catch (_) {
         error = 'Could not save changes. Keep the app open and try again.';

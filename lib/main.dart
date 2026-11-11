@@ -32,10 +32,13 @@ Future<void> main() async {
       anonKey: supabasePublishableKey,
     );
   }
-  final store = PetPalStore();
+  final store = PetPalStore(
+    client: authEnabled ? Supabase.instance.client : null,
+  );
   await store.load();
   runApp(PetPalApp(store: store, authEnabled: authEnabled));
 }
+
 Widget petPhoto(String? photo, {double radius = 30}) {
   Widget fallback() => CircleAvatar(
     radius: radius,
@@ -286,7 +289,9 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   String _usernameFromEmail(String value) =>
-      value.split('@').first.trim().isEmpty ? 'PetPal user' : value.split('@').first;
+      value.split('@').first.trim().isEmpty
+          ? 'PetPal user'
+          : value.split('@').first;
 
   Future<void> continueWithSso() async {
     setState(() {
@@ -303,7 +308,9 @@ class _AuthScreenState extends State<AuthScreen> {
       if (mounted) setState(() => error = friendlyAuthError(exception).message);
     } catch (_) {
       if (mounted) {
-        setState(() => error = 'SSO could not be started. Try email sign in instead.');
+        setState(
+          () => error = 'SSO could not be started. Try email sign in instead.',
+        );
       }
     } finally {
       if (mounted) setState(() => busy = false);
@@ -548,7 +555,7 @@ class _HomeState extends State<Home> {
   void initState() {
     super.initState();
     if (widget.currentUserLabel != null) {
-      s.setCurrentUser(widget.currentUserLabel!);
+      unawaited(s.connectAccount(widget.currentUserLabel!));
     }
     s.addListener(refresh);
     timer = Timer.periodic(
@@ -646,7 +653,8 @@ class _HomeState extends State<Home> {
                 child: const Text('Cancel'),
               ),
               FilledButton(
-                onPressed: () => Navigator.pop(ctx, name.text.trim().isNotEmpty),
+                onPressed:
+                    () => Navigator.pop(ctx, name.text.trim().isNotEmpty),
                 child: const Text('Create'),
               ),
             ],
@@ -1300,20 +1308,20 @@ class _HomeState extends State<Home> {
             children: [
               Row(
                 children: [
-             (p['photo'] as String? ?? '').isNotEmpty
-    		? petPhoto(p['photo'] as String?)
-    		: CircleAvatar(  
-                    radius: 30,
-                    backgroundColor: const Color(0xFFE6EFDC),
-                    child: Text(
-                      p['species'] == 'Cat'
-                          ? '🐱'
-                          : p['species'] == 'Dog'
-                          ? '🐶'
-                          : '🐾',
-                      style: const TextStyle(fontSize: 32),
-                    ),
-                  ),
+                  (p['photo'] as String? ?? '').isNotEmpty
+                      ? petPhoto(p['photo'] as String?)
+                      : CircleAvatar(
+                        radius: 30,
+                        backgroundColor: const Color(0xFFE6EFDC),
+                        child: Text(
+                          p['species'] == 'Cat'
+                              ? '🐱'
+                              : p['species'] == 'Dog'
+                              ? '🐶'
+                              : '🐾',
+                          style: const TextStyle(fontSize: 32),
+                        ),
+                      ),
                   const SizedBox(width: 16),
                   Expanded(
                     child: Column(
@@ -1732,69 +1740,72 @@ class _HomeState extends State<Home> {
       title: existing == null ? 'Meet your pet' : 'Edit pet',
       fields:
           (update) => [
-	    Center(child: petPhoto(photo, radius: 48)),
+            Center(child: petPhoto(photo, radius: 48)),
             const SizedBox(height: 12),
-OutlinedButton.icon(
-  icon: const Icon(Icons.add_photo_alternate_outlined),
-  label: Text(choosingPhoto ? 'Opening photos…' : 'Choose photo'),
-  onPressed: choosingPhoto
-      ? null
-      : () async {
-          update(() {
-            choosingPhoto = true;
-            photoError = null;
-          });
+            OutlinedButton.icon(
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              label: Text(choosingPhoto ? 'Opening photos…' : 'Choose photo'),
+              onPressed:
+                  choosingPhoto
+                      ? null
+                      : () async {
+                        update(() {
+                          choosingPhoto = true;
+                          photoError = null;
+                        });
 
-          try {
-            final picked = await ImagePicker().pickImage(
-              source: ImageSource.gallery,
-              maxWidth: 600,
-              maxHeight: 600,
-              imageQuality: 75,
-            );
+                        try {
+                          final picked = await ImagePicker().pickImage(
+                            source: ImageSource.gallery,
+                            maxWidth: 600,
+                            maxHeight: 600,
+                            imageQuality: 75,
+                          );
 
-            if (picked == null || !formOpen || !mounted) return;
+                          if (picked == null || !formOpen || !mounted) return;
 
-            final bytes = await picked.readAsBytes();
-            if (!formOpen || !mounted) return;
+                          final bytes = await picked.readAsBytes();
+                          if (!formOpen || !mounted) return;
 
-            if (bytes.length > 500 * 1024) {
-              update(() {
-                photoError = 'Choose a photo under 500 KB.';
-              });
-              return;
-            }
+                          if (bytes.length > 500 * 1024) {
+                            update(() {
+                              photoError = 'Choose a photo under 500 KB.';
+                            });
+                            return;
+                          }
 
-            update(() {
-              photo = base64Encode(bytes);
-            });
-          } catch (_) {
-            if (formOpen && mounted) {
-              update(() {
-                photoError = 'Could not open that photo. Try a JPG or PNG.';
-              });
-            }
-          } finally {
-            if (formOpen && mounted) {
-              update(() => choosingPhoto = false);
-            }
-          }
-        },
-),
-if (photo.isNotEmpty)
-  TextButton.icon(
-    onPressed: () => update(() {
-      photo = '';
-      photoError = null;
-    }),
-    icon: const Icon(Icons.delete_outline),
-    label: const Text('Remove photo'),
-  ),
-if (photoError != null)
-  Text(
-    photoError!,
-    style: TextStyle(color: Theme.of(context).colorScheme.error),
-  ),
+                          update(() {
+                            photo = base64Encode(bytes);
+                          });
+                        } catch (_) {
+                          if (formOpen && mounted) {
+                            update(() {
+                              photoError =
+                                  'Could not open that photo. Try a JPG or PNG.';
+                            });
+                          }
+                        } finally {
+                          if (formOpen && mounted) {
+                            update(() => choosingPhoto = false);
+                          }
+                        }
+                      },
+            ),
+            if (photo.isNotEmpty)
+              TextButton.icon(
+                onPressed:
+                    () => update(() {
+                      photo = '';
+                      photoError = null;
+                    }),
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Remove photo'),
+              ),
+            if (photoError != null)
+              Text(
+                photoError!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             field(name, 'Name', required: true),
             choice('Species', species, [
               'Dog',
@@ -1834,7 +1845,7 @@ if (photoError != null)
           'id': existing?['id'] ?? newId(),
           'name': name.text.trim(),
           'species': species,
-	  'photo': photo,
+          'photo': photo,
           'breed': breed.text.trim(),
           'birthday': birthday.text,
           'weight': weight.text.trim(),
