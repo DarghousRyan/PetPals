@@ -703,11 +703,43 @@ class _HomeState extends State<Home> {
     name.dispose();
   }
 
+  Future<void> acceptInvitationForm() async {
+    if (s.remote == null) {
+      message('Sign in with Supabase before accepting an invitation.');
+      return;
+    }
+    final token = TextEditingController();
+    final displayName = TextEditingController(text: s.currentUserName);
+    await form(
+      title: 'Accept household invitation',
+      fields:
+          (_) => [
+            field(
+              token,
+              'Invitation code',
+              hint: 'Paste the code from the household admin',
+              required: true,
+            ),
+            field(displayName, 'Name shown to the household', required: true),
+          ],
+      onSave: () async {
+        await s.acceptInvitation(
+          token: token.text,
+          displayName: displayName.text,
+        );
+        message('You joined the household.');
+      },
+    );
+    await disposeControllersAfterDialog([token, displayName]);
+  }
+
   void accountMenu(String choice) {
     if (choice == 'households') {
       householdPicker();
     } else if (choice == 'create') {
       householdForm();
+    } else if (choice == 'accept') {
+      acceptInvitationForm();
     } else if (choice == 'signout') {
       widget.onSignOut?.call();
     }
@@ -876,6 +908,15 @@ class _HomeState extends State<Home> {
                         title: Text('Create household'),
                       ),
                     ),
+                    if (s.remote != null)
+                      const PopupMenuItem(
+                        value: 'accept',
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.mark_email_read_outlined),
+                          title: Text('Accept invitation'),
+                        ),
+                      ),
                     if (widget.onSignOut != null)
                       const PopupMenuItem(
                         value: 'signout',
@@ -2113,32 +2154,88 @@ if (photoError != null)
   }
 
   Future<void> memberForm() async {
-    final name = TextEditingController();
+    final email = TextEditingController();
+    String role = 'member';
+    String? inviteToken;
+    final online = s.remote != null;
     await form(
-      title: 'Add household member',
+      title: online ? 'Invite household member' : 'Add household member',
       fields:
-          (_) => [
+          (update) => [
             field(
-              name,
-              'Name',
+              email,
+              online ? 'Email address' : 'Name',
               validator: (v) {
                 if (v == null || v.trim().isEmpty) {
-                  return 'Enter a name';
+                  return online ? 'Enter an email address' : 'Enter a name';
                 }
-                if (s.members.any(
-                  (m) => m.toLowerCase() == v.trim().toLowerCase(),
-                )) {
+                if (online &&
+                    !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim())) {
+                  return 'Enter a valid email address';
+                }
+                if (!online &&
+                    s.members.any(
+                      (m) => m.toLowerCase() == v.trim().toLowerCase(),
+                    )) {
                   return 'That name is already in your household';
                 }
                 return null;
               },
             ),
+            if (online)
+              DropdownButtonFormField<String>(
+                value: role,
+                decoration: const InputDecoration(labelText: 'Role'),
+                items: const [
+                  DropdownMenuItem(value: 'member', child: Text('Member')),
+                  DropdownMenuItem(
+                    value: 'caregiver',
+                    child: Text('Caregiver'),
+                  ),
+                ],
+                onChanged: (value) => update(() => role = value ?? 'member'),
+              ),
           ],
       onSave: () async {
-        s.members.add(name.text.trim());
-        await s.save();
+        if (online) {
+          inviteToken = await s.createInvitation(
+            email: email.text,
+            role: role,
+          );
+        } else {
+          s.members.add(email.text.trim());
+          await s.save();
+        }
       },
     );
-    await disposeControllersAfterDialog([name]);
+    if (inviteToken != null && mounted) {
+      await showDialog<void>(
+        context: context,
+        builder:
+            (ctx) => AlertDialog(
+              title: const Text('Invitation created'),
+              content: SelectableText(
+                'Send this invitation code to ${email.text.trim()}:\n\n$inviteToken\n\nThey must sign in with the invited email address before accepting it.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () async {
+                    await Clipboard.setData(
+                      ClipboardData(text: inviteToken!),
+                    );
+                    if (ctx.mounted) Navigator.pop(ctx);
+                    message('Invitation code copied.');
+                  },
+                  child: const Text('Copy code'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Done'),
+                ),
+              ],
+            ),
+      );
+    }
+    await disposeControllersAfterDialog([email]);
   }
 }
