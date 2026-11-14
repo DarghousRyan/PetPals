@@ -22,7 +22,12 @@ jobs:
       - name: Build Flutter web app
         run: |
           flutter pub get
-          flutter build web --release
+          flutter build web --release \
+            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+            --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY"
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
 
       - name: Deploy build/web to Vercel
         run: npx vercel deploy build/web --prod --yes --token "$VERCEL_TOKEN"
