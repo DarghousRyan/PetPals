@@ -22,6 +22,17 @@ const supabasePublishableKey = String.fromEnvironment(
   'SUPABASE_PUBLISHABLE_KEY',
 );
 
+String formatTaskTime(String raw) {
+  final parts = raw.split(':');
+  final hour = int.tryParse(parts.first) ?? 0;
+  final minute = parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
+  final normalizedHour = hour.clamp(0, 23).toInt();
+  final normalizedMinute = minute.clamp(0, 59).toInt();
+  final displayHour = normalizedHour % 12 == 0 ? 12 : normalizedHour % 12;
+  final period = normalizedHour >= 12 ? 'PM' : 'AM';
+  return '$displayHour:${normalizedMinute.toString().padLeft(2, '0')} $period';
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final authEnabled =
@@ -1202,7 +1213,8 @@ class _HomeState extends State<Home> {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  '${s.petName(t['petId'])} · ${t['time']} · ${t['assignee']}',
+                  '${s.petName(t['petId'])} · '
+                  '${formatTaskTime(t['time'] as String)} · ${t['assignee']}',
                   style: const TextStyle(fontSize: 14),
                 ),
                 if ((t['notes'] as String).isNotEmpty)
@@ -1949,7 +1961,11 @@ class _HomeState extends State<Home> {
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.schedule),
-              title: Text(time.format(context)),
+              title: Text(
+                formatTaskTime(
+                  '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
+                ),
+              ),
               trailing: const Icon(Icons.edit_outlined),
               onTap: () async {
                 final picked = await showTimePicker(

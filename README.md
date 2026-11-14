@@ -1,63 +1,75 @@
 # PetPal
 
-Flutter / Dart prototype for the CMPE 137 concept by **Jhenaro Flores and Ryan Darghous**.
+PetPal is a Flutter web app for organizing pet care, health records, and household tasks.
 
-## Run
+## Features
 
-On this Mac, double-click `run_petpal.command` in Finder, then open http://localhost:8080 after Flutter finishes starting. Keep the Terminal window open. The launcher uses the compatible SDK prepared alongside this project when available.
+- Create and manage pet profiles.
+- Track feeding, walking, grooming, medication, and other care tasks.
+- Assign tasks to household members.
+- Record health information and care history.
+- Sign in and save account data with Supabase.
+- Deploy the web app to Vercel.
 
-With your own compatible Flutter SDK installed:
+## Run locally
 
-```sh
+Install Flutter, then run:
+
+```bash
 flutter pub get
-flutter run -d web-server --web-port 8080
+flutter run -d chrome
 ```
 
-Open http://localhost:8080 for the web version. The source was checked using Flutter 3.29.3 / Dart 3.7.2.
+To create a production web build:
 
-For Android or iOS, start an emulator or connect a phone and run `flutter run`. iOS builds need macOS, Xcode, and signing. Native platform builds have not been verified unless listed below.
+```bash
+flutter build web --release \
+  --dart-define=SUPABASE_URL="your-supabase-url" \
+  --dart-define=SUPABASE_PUBLISHABLE_KEY="your-supabase-publishable-key"
+```
 
-## What works
+The generated web files are placed in `build/web`.
 
-- Add, edit, and delete pets, including birthdays, weight, and care notes.
-- Create feeding, walking, grooming, medication, and custom care tasks.
-- Assign tasks to household profiles; schedule one-time or daily care.
-- Browse dates, filter by pet, mark tasks complete, and undo mistakes.
-- Prevent duplicate completion on the same date; retain caregiver and timestamp.
-- Keep vet visits, vaccinations, medications, allergies, and other health notes.
-- Switch local caregiver profiles and see completion history.
-- Save data locally across launches and copy a JSON backup.
-- In-app reminders when a task becomes due while the app remains open.
-- Responsive navigation for mobile and larger screens; optional sample data.
+## Supabase configuration
 
-## Prototype boundaries
+The app reads these values at build time:
 
-This is a **single-device prototype**. Household profiles are local names, not authenticated accounts; there is no invitation delivery or synchronization across devices. A production shared household needs a backend such as Firebase or Supabase, authentication, access rules, and atomic task-completion writes.
+- `SUPABASE_URL` — your Supabase project URL.
+- `SUPABASE_PUBLISHABLE_KEY` — your Supabase publishable/anonymous key.
 
-Reminders are foreground alerts, **not background push or scheduled operating-system notifications**. Background notification delivery needs a platform notification service and permission handling. JSON copy is an export; import is not implemented. Health records are text entries, not file attachments. Browser storage can be cleared, and local preferences are not intended as the sole copy of important health records.
+Never use or expose the Supabase `service_role` key in the Flutter app.
 
-Future ideas in the presentation, including veterinarian discovery and personalized suggestions, are outside this first version.
+PetPal stores account data in the `petpal_accounts` table. Row Level Security should allow each authenticated user to access only their own row.
+
+## Deploy to Vercel
+
+Deployments are handled by GitHub Actions. Push to `main` after adding these repository secrets in GitHub:
+
+```text
+SUPABASE_URL
+SUPABASE_PUBLISHABLE_KEY
+VERCEL_TOKEN
+VERCEL_ORG_ID
+VERCEL_PROJECT_ID
+```
+
+The workflow builds Flutter for the web and deploys `build/web` to Vercel:
+
+```text
+.github/workflows/deploy-flutter-vercel.yml
+```
 
 ## Project structure
 
-- `lib/main.dart`: app theme, adaptive navigation, screens, and editing dialogs.
-- `lib/store.dart`: local persistence, recurring schedule logic, and completion history.
-- `test/store_test.dart`: recurrence, duplicate completion, attribution, and deletion tests.
-- `test/widget_test.dart`: first-run and mobile layout workflows.
+- `lib/main.dart` — app screens, navigation, forms, and authentication UI.
+- `lib/store.dart` — pet data, task scheduling, local persistence, and Supabase account syncing.
+- `supabase/schema.sql` — database table and Row Level Security setup.
+- `.github/workflows/deploy-flutter-vercel.yml` — automated Flutter web deployment.
 
-## Check
+## Useful checks
 
-```sh
+```bash
 flutter analyze
 flutter test
-flutter build web
+flutter build web --release
 ```
-
-Flutter dependencies: [shared_preferences](https://pub.dev/packages/shared_preferences). Compatible SDK downloads: [Flutter archive](https://docs.flutter.dev/install/archive).
-
-## Validation on this Mac
-
-- `flutter analyze --no-pub`: passed, no issues.
-- `flutter build web --no-pub`: passed.
-- Automated tests are included but could not execute here: the native Flutter test engine crashed during startup; the Chrome runner could not launch a browser. These are **not recorded as passing tests**.
-- Android/iOS compilation, device notifications, and cross-device collaboration have not been validated or implemented in this prototype.
