@@ -178,9 +178,18 @@ class PetPalStore extends ChangeNotifier {
     await save();
   }
 
-  Future<void> createHousehold(String name) async {
+  bool hasHouseholdNamed(String name) {
+    final normalized = name.trim().toLowerCase();
+    return normalized.isNotEmpty &&
+        households.any(
+          (household) =>
+              (household['name'] as String).trim().toLowerCase() == normalized,
+        );
+  }
+
+  Future<bool> createHousehold(String name) async {
     final normalized = name.trim();
-    if (normalized.isEmpty) return;
+    if (normalized.isEmpty || hasHouseholdNamed(normalized)) return false;
     _syncActiveHousehold();
     final id = newId();
     activeHouseholdId = id;
@@ -197,6 +206,23 @@ class PetPalStore extends ChangeNotifier {
     });
     _loadHousehold(id);
     await save();
+    return true;
+  }
+
+  Future<bool> deleteHousehold(String id) async {
+    if (households.length <= 1 ||
+        !households.any((household) => household['id'] == id)) {
+      return false;
+    }
+    _syncActiveHousehold();
+    final wasActive = activeHouseholdId == id;
+    households.removeWhere((household) => household['id'] == id);
+    if (wasActive) {
+      activeHouseholdId = households.first['id'] as String;
+      _loadHousehold(activeHouseholdId);
+    }
+    await save();
+    return true;
   }
 
   List<Map<String, dynamic>> _list(dynamic value) =>

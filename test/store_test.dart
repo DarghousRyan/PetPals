@@ -71,4 +71,27 @@ void main() {
     expect(store.tasks.first['assignee'], 'You');
     expect(await store.removeMember('You'), isFalse);
   });
+  test('household names are unique without case sensitivity', () async {
+    expect(await store.createHousehold('Test 1'), isTrue);
+    expect(await store.createHousehold('test 1'), isFalse);
+    expect(
+      store.households.where((h) => h['name'] == 'Test 1'),
+      hasLength(1),
+    );
+  });
+  test('deleting a household switches away from it and keeps one household', () async {
+    await store.createHousehold('First');
+    await store.createHousehold('Second');
+    final deletedId = store.activeHouseholdId;
+
+    expect(await store.deleteHousehold(deletedId), isTrue);
+    expect(store.households, hasLength(2));
+    expect(store.households.any((h) => h['id'] == deletedId), isFalse);
+    expect(store.activeHouseholdId, isNot(deletedId));
+
+    while (store.households.length > 1) {
+      await store.deleteHousehold(store.households.last['id'] as String);
+    }
+    expect(await store.deleteHousehold(store.households.single['id'] as String), isFalse);
+  });
 }

@@ -619,10 +619,37 @@ class _HomeState extends State<Home> {
                       subtitle: Text(
                         '${(h['members'] as List?)?.length ?? 0} members · ${(h['pets'] as List?)?.length ?? 0} pets',
                       ),
-                      trailing:
-                          h['id'] == s.activeHouseholdId
-                              ? const Icon(Icons.check, color: teal)
-                              : null,
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (h['id'] == s.activeHouseholdId)
+                            const Icon(Icons.check, color: teal),
+                          IconButton(
+                            tooltip: 'Delete household',
+                            icon: const Icon(
+                              Icons.delete_outline,
+                              color: Colors.red,
+                            ),
+                            onPressed: () async {
+                              final householdName = h['name'] as String;
+                              final confirmed = await confirm(
+                                'Delete $householdName?',
+                                'This will permanently delete this household and its pets, tasks, and health records.',
+                              );
+                              if (!confirmed) return;
+                              final deleted = await s.deleteHousehold(
+                                h['id'] as String,
+                              );
+                              if (deleted) {
+                                if (ctx.mounted) Navigator.pop(ctx);
+                                message('$householdName was deleted.');
+                              } else {
+                                message('You must keep at least one household.');
+                              }
+                            },
+                          ),
+                        ],
+                      ),
                       onTap: () async {
                         await s.switchHousehold(h['id'] as String);
                         if (ctx.mounted) Navigator.pop(ctx);
@@ -648,32 +675,52 @@ class _HomeState extends State<Home> {
 
   Future<void> householdForm() async {
     final name = TextEditingController();
+    String? error;
     final created = await showDialog<bool>(
       context: context,
       builder:
-          (ctx) => AlertDialog(
-            title: const Text('Create household'),
-            content: TextField(
-              controller: name,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: 'Household name'),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed:
-                    () => Navigator.pop(ctx, name.text.trim().isNotEmpty),
-                child: const Text('Create'),
-              ),
-            ],
+          (ctx) => StatefulBuilder(
+            builder: (ctx, setDialogState) {
+              return AlertDialog(
+                title: const Text('Create household'),
+                content: TextField(
+                  controller: name,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: 'Household name',
+                    errorText: error,
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(
+                    onPressed: () {
+                      final householdName = name.text.trim();
+                      if (householdName.isEmpty) {
+                        setDialogState(() => error = 'Enter a household name.');
+                        return;
+                      }
+                      if (s.hasHouseholdNamed(householdName)) {
+                        setDialogState(
+                          () => error = 'A household with this name already exists.',
+                        );
+                        return;
+                      }
+                      Navigator.pop(ctx, true);
+                    },
+                    child: const Text('Create'),
+                  ),
+                ],
+              );
+            },
           ),
     );
     if (created == true) {
-      await s.createHousehold(name.text);
-      message('Household created.');
+      final didCreate = await s.createHousehold(name.text);
+      message(didCreate ? 'Household created.' : 'That household already exists.');
     }
     name.dispose();
   }
