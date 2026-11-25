@@ -27,11 +27,33 @@ class PetPalStore extends ChangeNotifier {
   bool loadFailed = false;
   Future<void> _queue = Future.value();
 
+  String? get _storageKey {
+    final userId = remote?.auth.currentUser?.id;
+    if (remote == null) return 'petpal.v1';
+    return userId == null ? null : 'petpal.v1.user.$userId';
+  }
+
+  void _resetInMemory() {
+    pets = [];
+    tasks = [];
+    records = [];
+    history = [];
+    members = ['You'];
+    activeMember = 'You';
+    currentUserName = 'You';
+    households = [];
+    activeHouseholdId = 'default';
+    reminders = true;
+  }
+
   Future<void> load() async {
     loadFailed = false;
     error = null;
     try {
-      final raw = await prefs.getString('petpal.v1');
+      _resetInMemory();
+      final raw = _storageKey == null
+          ? null
+          : await prefs.getString(_storageKey!);
       if (raw != null) {
         final data = jsonDecode(raw) as Map<String, dynamic>;
         _applyData(data);
@@ -68,6 +90,8 @@ class PetPalStore extends ChangeNotifier {
   }
 
   Future<void> connectAccount(String displayName) async {
+    // A Supabase account must never inherit the anonymous/device-wide state.
+    _resetInMemory();
     setCurrentUser(displayName);
     await _loadRemoteAccount();
     notifyListeners();
@@ -90,7 +114,10 @@ class PetPalStore extends ChangeNotifier {
         await _saveRemoteAccount();
       }
       await prefs.setString('petpal.lastRemoteUser', user.id);
-      await prefs.setString('petpal.v1', export());
+      final storageKey = _storageKey;
+      if (storageKey != null) {
+        await prefs.setString(storageKey, export());
+      }
       error = null;
     } catch (_) {
       error = 'Cloud data could not be loaded. Your local data is still safe.';
@@ -244,7 +271,10 @@ class PetPalStore extends ChangeNotifier {
     final snapshot = export();
     _queue = _queue.then((_) async {
       try {
-        await prefs.setString('petpal.v1', snapshot);
+        final storageKey = _storageKey;
+        if (storageKey != null) {
+          await prefs.setString(storageKey, snapshot);
+        }
         await _saveRemoteAccount();
         error = null;
       } catch (_) {
