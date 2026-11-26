@@ -33,6 +33,22 @@ String formatTaskTime(String raw) {
   return '$displayHour:${normalizedMinute.toString().padLeft(2, '0')} $period';
 }
 
+Widget labeledControl(String label, Widget child) => Column(
+  crossAxisAlignment: CrossAxisAlignment.start,
+  children: [
+    Text(
+      label,
+      style: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w600,
+        color: ink.withValues(alpha: 0.78),
+      ),
+    ),
+    const SizedBox(height: 6),
+    child,
+  ],
+);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final authEnabled =
@@ -392,32 +408,42 @@ class _AuthScreenState extends State<AuthScreen> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 24),
-                  TextField(
-                    controller: email,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(labelText: 'Email'),
+                  labeledControl(
+                    'Email',
+                    TextField(
+                      controller: email,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(),
+                    ),
                   ),
                   const SizedBox(height: 12),
                   if (creatingAccount) ...[
-                    TextField(
-                      controller: username,
-                      textInputAction: TextInputAction.next,
-                      decoration: const InputDecoration(labelText: 'Username'),
+                    labeledControl(
+                      'Username',
+                      TextField(
+                        controller: username,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(),
+                      ),
                     ),
                     const SizedBox(height: 12),
                   ],
-                  TextField(
-                    controller: password,
-                    obscureText: true,
-                    decoration: const InputDecoration(labelText: 'Password'),
+                  labeledControl(
+                    'Password',
+                    TextField(
+                      controller: password,
+                      obscureText: true,
+                      decoration: const InputDecoration(),
+                    ),
                   ),
                   if (creatingAccount) ...[
                     const SizedBox(height: 12),
-                    TextField(
-                      controller: confirmPassword,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Re-type password',
+                    labeledControl(
+                      'Re-type password',
+                      TextField(
+                        controller: confirmPassword,
+                        obscureText: true,
+                        decoration: const InputDecoration(),
                       ),
                     ),
                   ],
@@ -683,12 +709,12 @@ class _HomeState extends State<Home> {
             builder: (ctx, setDialogState) {
               return AlertDialog(
                 title: const Text('Create household'),
-                content: TextField(
-                  controller: name,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    labelText: 'Household name',
-                    errorText: error,
+                content: labeledControl(
+                  'Household name',
+                  TextField(
+                    controller: name,
+                    autofocus: true,
+                    decoration: InputDecoration(errorText: error),
                   ),
                 ),
                 actions: [
@@ -1739,6 +1765,8 @@ class _HomeState extends State<Home> {
     );
   }
 
+  Widget labeled(String label, Widget child) => labeledControl(label, child);
+
   Widget field(
     TextEditingController c,
     String label, {
@@ -1746,49 +1774,62 @@ class _HomeState extends State<Home> {
     int lines = 1,
     String? hint,
     String? Function(String?)? validator,
-  }) => TextFormField(
-    controller: c,
-    maxLines: lines,
-    maxLength: lines > 1 ? 2000 : 100,
-    decoration: InputDecoration(
-      labelText: label,
-      hintText: hint,
-      counterText: '',
+  }) => labeled(
+    label,
+    TextFormField(
+      controller: c,
+      maxLines: lines,
+      maxLength: lines > 1 ? 2000 : 100,
+      decoration: InputDecoration(hintText: hint, counterText: ''),
+      validator:
+          validator ??
+          (v) =>
+              required && (v == null || v.trim().isEmpty)
+                  ? 'Please enter $label'
+                  : null,
     ),
-    validator:
-        validator ??
-        (v) =>
-            required && (v == null || v.trim().isEmpty)
-                ? 'Please enter $label'
-                : null,
   );
   Widget choice(
     String label,
     String value,
     List<String> options,
     void Function(String) change,
-  ) => DropdownButtonFormField<String>(
-    value: value,
-    isExpanded: true,
-    decoration: InputDecoration(labelText: label),
-    items:
-        options
-            .map(
-              (v) => DropdownMenuItem(
-                value: v,
-                child: Text(v, overflow: TextOverflow.ellipsis),
-              ),
-            )
-            .toList(),
-    onChanged: (v) {
-      if (v != null) change(v);
-    },
+  ) => labeled(
+    label,
+    DropdownButtonFormField<String>(
+      value: value,
+      isExpanded: true,
+      decoration: const InputDecoration(),
+      items:
+          options
+              .map(
+                (v) => DropdownMenuItem(
+                  value: v,
+                  child: Text(v, overflow: TextOverflow.ellipsis),
+                ),
+              )
+              .toList(),
+      onChanged: (v) {
+        if (v != null) change(v);
+      },
+    ),
   );
   Future<void> petForm({Map<String, dynamic>? existing}) async {
     final name = TextEditingController(text: existing?['name']);
     final breed = TextEditingController(text: existing?['breed']);
     final birthday = TextEditingController(text: existing?['birthday']);
-    final weight = TextEditingController(text: existing?['weight']);
+    final storedWeight = existing?['weight']?.toString().trim() ?? '';
+    final storedWeightMatch = RegExp(
+      r'^(\d+)\s*(kg|kgs|lb|lbs)$',
+      caseSensitive: false,
+    ).firstMatch(storedWeight);
+    final weight = TextEditingController(
+      text: storedWeightMatch?.group(1) ?? storedWeight,
+    );
+    String weightUnit =
+        storedWeightMatch?.group(2)?.toLowerCase().startsWith('lb') == true
+            ? 'lbs'
+            : 'kg';
     final notes = TextEditingController(text: existing?['notes']);
     String species = existing?['species'] ?? 'Dog';
     String photo = existing?['photo'] as String? ?? '';
@@ -1874,29 +1915,71 @@ class _HomeState extends State<Home> {
               'Other',
             ], (v) => update(() => species = v)),
             field(breed, 'Breed'),
-            TextFormField(
-              controller: birthday,
-              readOnly: true,
-              decoration: InputDecoration(
-                labelText: 'Birthday (optional)',
-                suffixIcon: IconButton(
-                  tooltip: 'Clear birthday',
-                  onPressed: birthday.clear,
-                  icon: const Icon(Icons.clear),
+            labeled(
+              'Birthday (optional)',
+              TextFormField(
+                controller: birthday,
+                readOnly: true,
+                decoration: InputDecoration(
+                  suffixIcon: IconButton(
+                    tooltip: 'Clear birthday',
+                    onPressed: birthday.clear,
+                    icon: const Icon(Icons.clear),
+                  ),
                 ),
+                onTap: () async {
+                  final value = await showDatePicker(
+                    context: context,
+                    initialDate:
+                        DateTime.tryParse(birthday.text) ?? DateTime.now(),
+                    firstDate: DateTime(1970),
+                    lastDate: DateTime.now(),
+                  );
+                  if (value != null) birthday.text = dayKey(value);
+                },
               ),
-              onTap: () async {
-                final value = await showDatePicker(
-                  context: context,
-                  initialDate:
-                      DateTime.tryParse(birthday.text) ?? DateTime.now(),
-                  firstDate: DateTime(1970),
-                  lastDate: DateTime.now(),
-                );
-                if (value != null) birthday.text = dayKey(value);
-              },
             ),
-            field(weight, 'Weight', hint: 'For example, 28 kg'),
+            labeled(
+              'Weight',
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 140,
+                    child: TextFormField(
+                      controller: weight,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                      ],
+                      decoration: const InputDecoration(hintText: 'e.g. 28'),
+                      validator: (value) {
+                        final text = value?.trim() ?? '';
+                        if (text.isEmpty) return null;
+                        final parsed = int.tryParse(text);
+                        return parsed == null || parsed <= 0
+                            ? 'Enter a whole number greater than 0'
+                            : null;
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: weightUnit,
+                      decoration: const InputDecoration(),
+                      items: const [
+                        DropdownMenuItem(value: 'lbs', child: Text('lbs')),
+                        DropdownMenuItem(value: 'kg', child: Text('kg')),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) update(() => weightUnit = value);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
             field(notes, 'Care notes', lines: 3),
           ],
       onSave: () async {
@@ -1907,7 +1990,9 @@ class _HomeState extends State<Home> {
           'photo': photo,
           'breed': breed.text.trim(),
           'birthday': birthday.text,
-          'weight': weight.text.trim(),
+          'weight': weight.text.trim().isEmpty
+              ? ''
+              : '${weight.text.trim()} $weightUnit',
           'notes': notes.text.trim(),
         };
         if (existing != null) {
@@ -1964,19 +2049,22 @@ class _HomeState extends State<Home> {
               required: true,
               hint: 'For example, breakfast',
             ),
-            DropdownButtonFormField<String>(
-              value: petId,
-              decoration: const InputDecoration(labelText: 'Pet'),
-              items:
-                  s.pets
-                      .map(
-                        (p) => DropdownMenuItem<String>(
-                          value: p['id'],
-                          child: Text(p['name']),
-                        ),
-                      )
-                      .toList(),
-              onChanged: (v) => update(() => petId = v!),
+            labeled(
+              'Pet',
+              DropdownButtonFormField<String>(
+                value: petId,
+                decoration: const InputDecoration(),
+                items:
+                    s.pets
+                        .map(
+                          (p) => DropdownMenuItem<String>(
+                            value: p['id'],
+                            child: Text(p['name']),
+                          ),
+                        )
+                        .toList(),
+                onChanged: (v) => update(() => petId = v!),
+              ),
             ),
             choice(
               'Care type',
@@ -2076,19 +2164,22 @@ class _HomeState extends State<Home> {
       fields:
           (update) => [
             field(title, 'Record title', required: true),
-            DropdownButtonFormField<String>(
-              value: selectedPet,
-              decoration: const InputDecoration(labelText: 'Pet'),
-              items:
-                  s.pets
-                      .map(
-                        (p) => DropdownMenuItem<String>(
-                          value: p['id'],
-                          child: Text(p['name']),
-                        ),
-                      )
-                      .toList(),
-              onChanged: (v) => update(() => selectedPet = v!),
+            labeled(
+              'Pet',
+              DropdownButtonFormField<String>(
+                value: selectedPet,
+                decoration: const InputDecoration(),
+                items:
+                    s.pets
+                        .map(
+                          (p) => DropdownMenuItem<String>(
+                            value: p['id'],
+                            child: Text(p['name']),
+                          ),
+                        )
+                        .toList(),
+                onChanged: (v) => update(() => selectedPet = v!),
+              ),
             ),
             choice('Record type', type, [
               'Vet visit',
